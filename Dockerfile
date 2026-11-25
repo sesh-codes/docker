@@ -97,5 +97,5 @@ RUN ln -s "$(readlink /opt/sesh/cursor/.local/bin/cursor-agent)" /opt/sesh/bin/c
  && ln -s /opt/sesh/opencode/.opencode/bin/opencode /opt/sesh/bin/opencode \
  && claude --version && codex --version && gemini --version && cursor-agent --version && opencode --version
 
-# The default target: `sesh/sesh:latest`.
+# The default target: `latest`.
 FROM base
