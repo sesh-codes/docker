@@ -1,0 +1,92 @@
+# Builds every image for a Sesh release, for amd64 and arm64, and pushes it to
+# ghcr.io/sesh-codes/sesh. Sesh's release script starts it once the release is published.
+name: Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Sesh version to build, such as 0.47.0
+        required: true
+      latest:
+        description: Also move the unversioned tags (latest, claude, …)
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency: publish-${{ inputs.version }}
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [base, claude, codex, gemini, cursor, opencode, all]
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/sesh
+      DESCRIPTION: A Sesh host in a container. Run coding agents in Docker and drive them from Sesh on your Mac, iPhone, iPad, Android or Linux.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tags
+        id: tags
+        env:
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ inputs.version }}
+          LATEST: ${{ inputs.latest }}
+        run: |
+          case "$VERSION" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::version must look like 0.47.0, not $VERSION"; exit 1 ;;
+          esac
+          if [ "$TARGET" = base ]; then
+            tags="$IMAGE:$VERSION"
+            [ "$LATEST" = true ] && tags="$tags,$IMAGE:latest"
+          else
+            tags="$IMAGE:$VERSION-$TARGET"
+            [ "$LATEST" = true ] && tags="$tags,$IMAGE:$TARGET"
+          fi
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: ${{ matrix.target }}
+          platforms: linux/amd64,linux/arm64
+          build-args: SESH_RELEASES_URL=https://sesh.codes/releases/v${{ inputs.version }}
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: |
+            org.opencontainers.image.title=Sesh
+            org.opencontainers.image.description=${{ env.DESCRIPTION }}
+            org.opencontainers.image.version=${{ inputs.version }}
+            org.opencontainers.image.url=https://sesh.codes/docs/docker/
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          # The package page reads the description from the index of a multi-platform image.
+          annotations: |
+            index:org.opencontainers.image.description=${{ env.DESCRIPTION }}
+            index:org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          cache-from: type=gha,scope=${{ matrix.target }}
+          cache-to: type=gha,scope=${{ matrix.target }},mode=max
+          push: true
+
+      - name: Check the version inside
+        env:
+          TAGS: ${{ steps.tags.outputs.tags }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          image="${TAGS%%,*}"
+          got="$(docker run --rm "$image" seshd --version)"
+          [ "$got" = "seshd $VERSION" ] || { echo "::error::$image has $got"; exit 1; }
